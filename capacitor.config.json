@@ -1,0 +1,12 @@
+{
+  "appId": "com.cofamio.app",
+  "appName": "CoFamio",
+  "webDir": "dist",
+  "server": {
+    "url": "https://cofamio.ctonew.app",
+    "cleartext": false
+  },
+  "ios": {
+    "scheme": "cofamio"
+  }
+}

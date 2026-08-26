@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Push Notifications capability. Xcode rewrites aps-environment to "production"
+	automatically when building with a distribution provisioning profile, so
+	"development" here is correct for dev builds AND App Store archives.
+	(To double-check after archival: open the .ipa and inspect
+	embedded.mobileprovision / the aps-environment entitlement.)
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!--
+	IF_IAP_LATER: do NOT add the "com.apple.developer.in-app-payments" entitlement
+	in this build — web-only subscriptions for launch. When StoreKit is added,
+	this entitlement gets added by the StoreKit capability and the entitlement
+	file may be extended. Leave it out until then.
+	-->
+</dict>
+</plist>
