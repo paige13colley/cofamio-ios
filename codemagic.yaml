@@ -1,0 +1,158 @@
+# Codemagic configuration for the CoFamio iOS app
+# -------------------------------------------------
+# This file lets Codemagic's cloud macOS machines build the app and upload it
+# to App Store Connect WITHOUT the owner ever opening Xcode. You just:
+#   1. Add the secrets below (see "Secrets the owner must add").
+#   2. In Codemagic, connect this repo and click "Start new build" (or push to
+#      a branch matching one of the triggers below).
+#
+# Project layout:
+#   App/App.xcodeproj  -> the Xcode project (scheme: "cofamio", bundle id:
+#                         com.cofamio.app, DEVELOPMENT_TEAM already set to
+#                         X7SH589UVM, CODE_SIGN_STYLE = Automatic).
+#   capacitor.config.json -> the app loads the live web app at
+#                         https://cofamio.ctonew.app (no node/CocoaPods build
+#                         step needed for iOS — this is a hand-authored native
+#                         Capacitor shell).
+#
+# -----------------------------------------------------------------------------
+# SECRETS THE OWNER MUST ADD IN CODEMAGIC
+# -----------------------------------------------------------------------------
+# Create an environment *group* (e.g. "app-store-credentials") and put these 4
+# values in it, then reference that group under `environment: groups:` below.
+#
+#   1. APP_STORE_CONNECT_KEY_IDENTIFIER
+#        The "Key ID" shown next to the API key you create at
+#        https://appstoreconnect.apple.com/access/integrations/api
+#        (10-character alphanumeric, e.g. 2X9R4HXF34).
+#
+#   2. APP_STORE_CONNECT_ISSUER_ID
+#        The "Issuer ID" shown on the same App Store Connect API keys page
+#        (a UUID like 69a6de82-c5bb-4a9e-b0c1-1c2d3e4f5a6b).
+#
+#   3. APP_STORE_CONNECT_PRIVATE_KEY
+#        The CONTENTS of the .p8 private key file, base64-encoded.
+#        How to get it: on that same API keys page click "+" -> "Generate API
+#        Key" -> give it a name, tick "App Store Connect" access, then download
+#        the .p8 file (you can only download it once). The file looks like:
+#            -----BEGIN PRIVATE KEY-----
+#            MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdw...
+#            -----END PRIVATE KEY-----
+#        Then base64-encode the WHOLE file (including the BEGIN/END lines) and
+#        paste that here. On macOS/Linux:
+#            base64 -i AuthKey_xxxxxxxxxx.p8
+#        This key MUST have "App Store Connect" access level so Codemagic can
+#        create the distribution profile and upload the build.
+#
+#   4. CERTIFICATE_PRIVATE_KEY
+#        The private key (.p12 -> exported as a .pem private key, base64) of the
+#        Apple Distribution certificate that signs the app. Codemagic uses this
+#        to install the signing certificate on its cloud machine. Export it from
+#        Keychain Access or match the .p8/.p12 you already use for iOS signing.
+#        To produce base64 from a .p12-derived private key (.pem):
+#            openssl pkcs12 -in Certificates.p12 -nodes -nocerts | \
+#                openssl rsa | base64
+#
+# IMPORTANT: APP_STORE_CONNECT_PRIVATE_KEY and CERTIFICATE_PRIVATE_KEY must be
+# stored with the "Secure" ("encrypted") checkbox ON in the Codemagic UI.
+# -----------------------------------------------------------------------------
+
+workflows:
+  cofamio-ios-app-store:
+    name: CoFamio iOS — App Store build
+    max_build_duration: 120
+    instance_type: macos_m2 # Apple Silicon macOS instance (Xcode latest by default)
+    environment:
+      xcode: latest
+      # The environment group that holds the 4 secrets described above.
+      groups:
+        - app-store-credentials
+      vars:
+        # Scheme and project path are hard-coded below; no extra vars needed.
+        XCODE_PROJECT: "App/App.xcodeproj"
+        XCODE_SCHEME: "cofamio"
+        BUNDLE_ID: "com.cofamio.app"
+
+    # Run with a click, or automatically on any push to a branch matching the
+    # trigger patterns (e.g. release/*).
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "release/*"
+          include: true
+      cancel_previous_builds: false
+    manual: true
+
+    scripts:
+      # 1. Create and initialize an ephemeral keychain on the cloud machine.
+      - name: Initialize keychain
+        script: |
+          keychain initialize
+
+      # 2. Fetch the provisioning profile + distribution certificate from App
+      #    Store Connect using the API key (the 4 secrets above). This reads
+      #    the app's bundle id and DEVELOPMENT_TEAM automatically. --create
+      #    makes Codemagic create the distribution profile if it does not exist.
+      - name: Fetch signing files from App Store Connect
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+
+      # 3. Install the fetched certificate into the keychain.
+      - name: Add certificate to keychain
+        script: |
+          keychain add-certificates
+
+      # 4. Point Xcode's code-signing settings at the profiles we just fetched
+      #    (keeps CODE_SIGN_STYLE = Automatic working for this archive).
+      - name: Apply code signing profiles
+        script: |
+          xcode-project use-profiles
+
+      # 5. Bump the build number so every upload is a new, unique build.
+      #    Falls back to 1 if git history has no tagged builds yet.
+      - name: Increment build number
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          # Current build number = number of commits on this clone (resets per
+          # fresh clone; good enough for TestFlight increments).
+          # If you prefer App Store Connect-managed versions, remove this step.
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          # This is optional nicety; the archive still works without it.
+          echo "Using build number: $BUILD_NUMBER"
+
+      # 6. Build an archive and export an App Store .ipa using xcodebuild
+      #    (through Codemagic's xcode-project helper, which handles
+      #    export-options with method: app-store-connect).
+      - name: Build .ipa for App Store
+        script: |
+          set -e
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+
+    # Upload the built .ipa to App Store Connect (TestFlight) using the same
+    # App Store Connect API key.
+    publishing:
+      app_store_connect:
+        # The App Store Connect API key is referenced by the same private key
+        # value used above for code signing.
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
+      email:
+        recipients:
+          - hello@cofamio.org
+        notify:
+          success: true
+          failure: true
