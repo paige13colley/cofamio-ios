@@ -61,7 +61,7 @@ workflows:
   cofamio-ios-app-store:
     name: CoFamio iOS — App Store build
     max_build_duration: 120
-    instance_type: macos_m2 # Apple Silicon macOS instance (Xcode latest by default)
+    instance_type: mac_mini_m2 # Apple Silicon macOS instance (Xcode latest by default)
     environment:
       xcode: latest
       # The environment group that holds the 4 secrets described above.
@@ -82,7 +82,7 @@ workflows:
         - pattern: "release/*"
           include: true
       cancel_previous_builds: false
-    manual: true
+
 
     scripts:
       # 1. Create and initialize an ephemeral keychain on the cloud machine.
