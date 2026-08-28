@@ -65,7 +65,12 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        if let url = URL(string: Self.appOrigin) {
+        // Launch straight into the app area (/app), NOT the marketing site —
+        // that is the owner's intended app behavior. The /app entry route then
+        // routes to the dashboard (persisted session), onboarding, or the login
+        // screen as appropriate. Session persistence via WKWebsiteDataStore()
+        // keeps a returning user logged in (see the comment near config setup).
+        if let url = URL(string: Self.appOrigin + "/app") {
             webView.load(URLRequest(url: url))
         }
     }
@@ -216,7 +221,9 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     static func webURL(from url: URL) -> URL? {
         if url.scheme?.lowercased() == "cofamio" {
             var path = url.path // "/calendar", "/reset", "" for bare cofamio://
-            if path.isEmpty || path == "/" { path = "" }
+            // A bare cofamio:// (or cofamio:///) opens the app area, mirroring
+            // cold-start behavior — never the marketing site.
+            if path.isEmpty || path == "/" { path = "/app" }
             let query = url.query.map { "?" + $0 } ?? ""
             return URL(string: appOrigin + path + query)
         }
