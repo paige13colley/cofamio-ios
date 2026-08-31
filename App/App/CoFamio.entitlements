@@ -2,20 +2,23 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!--
-	Push Notifications capability. Xcode rewrites aps-environment to "production"
-	automatically when building with a distribution provisioning profile, so
-	"development" here is correct for dev builds AND App Store archives.
-	(To double-check after archival: open the .ipa and inspect
-	embedded.mobileprovision / the aps-environment entitlement.)
-	-->
-	<key>aps-environment</key>
-	<string>development</string>
-	<!--
-	IF_IAP_LATER: do NOT add the "com.apple.developer.in-app-payments" entitlement
-	in this build — web-only subscriptions for launch. When StoreKit is added,
-	this entitlement gets added by the StoreKit capability and the entitlement
-	file may be extended. Leave it out until then.
-	-->
-</dict>
+    <!--
+    Push Notifications capability. Xcode rewrites aps-environment to "production"
+    automatically when building with a distribution provisioning profile, so
+    "development" here is correct for dev builds AND App Store archives.
+    (To double-check after archival: open the .ipa and inspect
+    embedded.mobileprovision / the aps-environment entitlement.)
+    -->
+    <key>aps-environment</key>
+    <string>development</string>
+    <!--
+    In-App Purchase (Phase 2): StoreKit2 auto-renewable subscriptions do NOT
+    require an entitlement key in this file. The "In-App Purchase" capability
+    is reflected by (a) linking StoreKit.framework in the Xcode project
+    (appstore capability, see project.pbxproj) and (b) enabling the In-App
+    Purchase capability on the App ID in App Store Connect (owner checklist in
+    README-UPLOAD.md). The old "com.apple.developer.in-app-payments"
+    entitlement is for Apple Pay, not IAP, and must NOT be added here.
+    -->
+
 </plist>

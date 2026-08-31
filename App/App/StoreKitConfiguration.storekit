@@ -1,0 +1,59 @@
+{
+  "identifier" : "COFAMIO-STOREKIT-LOCAL",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "7.99",
+      "familyShareable" : true,
+      "internalID" : "cofamio-plus-monthly",
+      "localizations" : [
+        {
+          "description" : "CoFamio Plus — the full family organizer: unlimited children, calendar, tasks, reminders, shopping, contacts, organizers, caregiver access, and more.",
+          "displayName" : "CoFamio Plus",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.cofamio.app.plus.monthly",
+      "referenceName" : "Plus Monthly",
+      "subscriptionGroupID" : "cofamio-plans",
+      "type" : "AutoRenewableSubscription"
+    },
+    {
+      "displayPrice" : "11.99",
+      "familyShareable" : true,
+      "internalID" : "cofamio-complete-monthly",
+      "localizations" : [
+        {
+          "description" : "CoFamio Complete — everything in Plus plus advanced co-parenting: custody schedules, split shared expenses, co-parent messaging, shared documents, and more.",
+          "displayName" : "CoFamio Complete",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.cofamio.app.complete.monthly",
+      "referenceName" : "Complete Monthly",
+      "subscriptionGroupID" : "cofamio-plans",
+      "type" : "AutoRenewableSubscription"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "cofamio-plans",
+      "localizations" : [
+        {
+          "displayName" : "CoFamio Plans",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "CoFamio Plans"
+    }
+  ],
+  "version" : {
+    "major" : 2,
+    "minor" : 0
+  }
+}

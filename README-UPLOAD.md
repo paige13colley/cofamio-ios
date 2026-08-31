@@ -153,13 +153,73 @@ App Store Connect → **CoFamio → App Store** tab. Fill in the required fields
 | **Rating** | Complete the questionnaire — this app has no user-generated content; 4+ recommended. |
 | **Privacy policy URL** | https://cofamio.ctonew.app/privacy |
 | **Review information — Sign-in** | Provide a test account (email + password) so App Review can log in; add a note that the app wraps the live site and all billing is via the web checkout. |
-| **In-App Purchases** | **Not applicable — this build has no IAP.** Subscriptions are the existing web Stripe flow (note this in Review Notes so the reviewer doesn't expect a purchase mechanism). |
+| **In-App Purchases** | Two auto-renewable subscription products (Plus / Complete — see §10). Before release, confirm they're approved and live in App Store Connect and note the current status in Review Notes. |
 
 Then **Add for Review** → wait (days, usually). You can also choose
 **Manually release** to control when it goes live.
 
 ---
 
+## 10. In-App Purchases (StoreKit2 — Phase 2)
+The app now carries a **native StoreKit2 purchase engine** (`StoreKitManager.swift`)
+so that subscriptions bought inside the iOS app use Apple's auto-renewable
+subscriptions, in addition to the existing web Stripe flow. The web-only Stripe
+path and the user-visible web UI are **unchanged** — on iOS the exact same "Start
+7-Day Free Trial" / Restore buttons call the native StoreKit sheet instead of
+Stripe; on web/desktop they still open Stripe Checkout.
+
+How it works (for the record):
+- `window.CoFamioNative.iap.*` (injected by `ViewController.swift`) exposes
+  `getProducts`, `purchase(planId, appAccountToken)`, `restore`,
+  `getCurrentEntitlement`, `canMakePayments` to the web layer
+  (`src/lib/appleIap.ts` in the web repo).
+- `purchase` sets StoreKit's `appAccountToken` to the **CoFamio userId**, presents
+  the system purchase sheet, and on success hands the StoreKit2 **JWS
+  (`signedTransactionInfo`) + environment** back to the web layer, which POSTs
+  `POST /api/billing/apple/sync`. The native shell also POSTs that sync directly
+  as a fallback, and listens to `Transaction.updates` for renewals/refunds.
+- The two product ids are **`com.cofamio.app.plus.monthly`** (Plus) and
+  **`com.cofamio.app.complete.monthly`** (Complete) — the same values the web
+  server maps via `APPLE_IAP_PRODUCT_PLUS` / `APPLE_IAP_PRODUCT_COMPLETE`.
+- The whole Apple path is **dormant** until the operator sets `APPLE_IAP_ENABLED=true`
+  with the App Store Connect credentials (see `APPLE-IAP-DESIGN.md`). No purchase is
+  made and no entitlement is created just by building/running this branch.
+
+### Setting up products in App Store Connect (owner, once)
+Follow the checklist in `APPLE-IAP-DESIGN.md` §6: create a Subscription Group,
+two monthly auto-renewable subscription products with the two product ids above,
+an In-App Purchase key (→ `APPLE_IAP_KEY*`), the Shared Secret, and a Server
+Notifications V2 URL. **Enable In-App Purchase on the App ID** (App Store Connect →
+Your App → Capabilities → In-App Purchase) — the entitlement file does NOT carry
+an IAP key; the capability is the App ID toggle plus the linked StoreKit.framework.
+
+### Testing in StoreKit Sandbox
+1. **Add a sandbox tester** (App Store Connect → Users and Access → Sandbox →
+   add an Apple ID). Do NOT use your real Apple ID — sandbox purchases never
+   charge the tester.
+2. On the iPhone (or Simulator), go to **Settings → your Apple ID → Media &
+   Purchases → Sandbox Account** and sign in as that tester.
+3. Build & run the app from Xcode (this branch). Log in to CoFamio (the web
+   account you want the entitlement on).
+4. Open **Settings → Subscription & billing**, pick a plan, tap **Start 7-Day
+   Free Trial**. The system StoreKit purchase sheet appears — approve with the
+   sandbox account. The backend receives the signed transaction via
+   `/api/billing/apple/sync` (and the entitlement appears in `GET /api/billing/status`).
+5. To test **renewal**: App Store Connect → your subscription product → localizations
+   → set a short **review/renewal interval** (e.g. a few minutes) so the sandbox
+   renews quickly, then wait and watch `Transaction.updates` push a renewal.
+6. To test **restore**: delete/reinstall the app or sign out, then tap **Restore
+   purchases** (visible only in the iOS app) — `AppStore.sync()` restores the
+   entitlement.
+7. To test **reflect a refund/cancel**: cancel the subscription in the
+   sandbox account's Settings → Subscriptions; the `Transaction.updates` stream →
+   `/api/billing/apple/sync` reflects the inactive state.
+> Optional local dev: for fast iteration without App Store Connect, add the
+> `App/App/StoreKitConfiguration.storekit` file's scheme (Product → Scheme → Run →
+> Options → StoreKit Configuration) to simulate products locally. This is only for
+> local Xcode testing; it is not required for sandbox or production.
+
+---
 ## Architecture notes (for your engineering team, read once)
 
 - **Shell:** `AppDelegate.swift` + `ViewController.swift`, zero third-party
