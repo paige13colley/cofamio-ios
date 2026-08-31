@@ -11,9 +11,9 @@ import StoreKit
 /// nothing here is reachable there.
 ///
 /// Key behaviours (all StoreKit2 / iOS 15+):
-///   - Loads the two auto-renewable subscription products whose ids mirror the
-///     web plans (see `App Store Connect` products + `APPLE_IAP_PRODUCT_*` env
-///     notes in README-UPLOAD.md). Only product *ids* live here — never secrets.
+///   - Loads the single auto-renewable subscription product whose id mirrors the
+///     web plan (see `App Store Connect` product + `APPLE_IAP_PRODUCT` notes in
+///     README-UPLOAD.md). Only the product *id* lives here — never secrets.
 ///   - Purchase sets `appAccountToken == the CoFamio userId` so the backend can
 ///     tie the transaction to the account via `/api/billing/apple/sync` and App
 ///     Store Server Notifications.
@@ -32,11 +32,10 @@ final class StoreKitManager: NSObject {
 
     static let shared = StoreKitManager()
 
-    // Product ids for the two plans. These are the App Store Connect product ids
-    // and mirror the server defaults for APPLE_IAP_PRODUCT_PLUS / _COMPLETE.
+    // Product id for the single CoFamio plan. This is the App Store Connect
+    // product id and mirrors the server default for APPLE_IAP_PRODUCT.
     // Keep in sync with App Store Connect (Phase 3 owner checklist).
-    let productPlusId = "com.cofamio.app.plus.monthly"
-    let productCompleteId = "com.cofamio.app.complete.monthly"
+    let productId = "com.cofamio.app.monthly"
 
     /// Native -> backend sync callback (installed by ViewController, which owns the
     /// web view's cookie store so it can POST /api/billing/apple/sync with the
@@ -101,14 +100,14 @@ final class StoreKitManager: NSObject {
 
     // MARK: - Products
 
-    /// Load the StoreKit products (pub + complete) from the App Store. Returns the
-    /// already-cached set when loaded. Empty when StoreKit has no products yet
-    /// (e.g. not configured in App Store Connect / not signed in to a sandbox
-    /// account) — the purchase call then reports a clean error.
+    /// Load the StoreKit product (the single CoFamio plan) from the App Store.
+    /// Returns the already-cached value when loaded. Empty when StoreKit has no
+    /// product yet (e.g. not configured in App Store Connect / not signed in to a
+    /// sandbox account) — the purchase call then reports a clean error.
     func loadProducts() async -> [Product] {
         if !productsCache.isEmpty { return Array(productsCache.values) }
         do {
-            let products = try await Product.products(for: [productPlusId, productCompleteId])
+            let products = try await Product.products(for: [productId])
             var byId: [String: Product] = [:]
             for p in products { byId[p.id] = p }
             productsCache = byId
@@ -120,15 +119,16 @@ final class StoreKitManager: NSObject {
     }
 
     func productId(forPlan planId: String) -> String {
-        planId == "complete" ? productCompleteId : productPlusId
+        productId // single-plan pricing — every purchase uses the one CoFamio product
     }
 
     // MARK: - Purchase (StoreKit2)
 
-    /// Present the system StoreKit purchase sheet for a plan.
+    /// Present the system StoreKit purchase sheet for the CoFamio plan.
     ///
     /// - Parameters:
-    ///   - planId: `"plus"` or `"complete"` (matches the web plan in `BillingCard`).
+    ///   - planId: the web plan id ("cofamio" — matches BillingCard). Single-plan
+    ///     pricing always buys the one CoFamio product.
     ///   - appAccountToken: the logged-in CoFamio **userId** (a UUID). Used as the
     ///     StoreKit `appAccountToken` so the backend can attribute the purchase.
     func purchase(planId: String, appAccountToken token: UUID) async -> [String: Any] {
@@ -267,7 +267,7 @@ final class StoreKitManager: NSObject {
     }
 
     static func plan(forProductId productId: String) -> String {
-        productId.lowercased().contains("complete") ? "complete" : "plus"
+        "cofamio" // single-plan pricing — every Apple product maps to "cofamio"
     }
 
     static func environmentLabel(_ env: Transaction.Environment) -> String {
