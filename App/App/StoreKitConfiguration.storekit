@@ -11,12 +11,12 @@
       "localizations" : [
         {
           "description" : "CoFamio — the complete family organizer and co-parenting platform: unlimited children, calendar, custody schedules, tasks, reminders, shopping, contacts, organizers, shared expenses, co-parent messaging, shared documents, caregiver access, and more.",
-          "displayName" : "CoFamio",
+          "displayName" : "CoFamio Premium",
           "locale" : "en_US"
         }
       ],
-      "productID" : "com.cofamio.app.monthly",
-      "referenceName" : "CoFamio Monthly",
+      "productID" : "com.cofamio.app.plus.monthly",
+      "referenceName" : "CoFamio Premium",
       "subscriptionGroupID" : "cofamio-plans",
       "type" : "AutoRenewableSubscription"
     }

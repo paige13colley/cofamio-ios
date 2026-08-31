@@ -35,7 +35,7 @@ final class StoreKitManager: NSObject {
     // Product id for the single CoFamio plan. This is the App Store Connect
     // product id and mirrors the server default for APPLE_IAP_PRODUCT.
     // Keep in sync with App Store Connect (Phase 3 owner checklist).
-    let productId = "com.cofamio.app.monthly"
+    let productId = "com.cofamio.app.plus.monthly"
 
     /// Native -> backend sync callback (installed by ViewController, which owns the
     /// web view's cookie store so it can POST /api/billing/apple/sync with the

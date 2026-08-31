@@ -178,7 +178,7 @@ How it works (for the record):
   (`signedTransactionInfo`) + environment** back to the web layer, which POSTs
   `POST /api/billing/apple/sync`. The native shell also POSTs that sync directly
   as a fallback, and listens to `Transaction.updates` for renewals/refunds.
-- The single product id is **`com.cofamio.app.monthly`** (CoFamio @ $9.99/mo) —
+- The single product id is **`com.cofamio.app.plus.monthly`** (CoFamio Premium @ $9.99/mo) —
   the same value the web server maps via `APPLE_IAP_PRODUCT`.
 - The whole Apple path is **dormant** until the operator sets `APPLE_IAP_ENABLED=true`
   with the App Store Connect credentials (see `APPLE-IAP-DESIGN.md`). No purchase is
@@ -186,7 +186,7 @@ How it works (for the record):
 
 ### Setting up products in App Store Connect (owner, once)
 Follow the checklist in `APPLE-IAP-DESIGN.md` §6: create a Subscription Group,
-two monthly auto-renewable subscription products with the two product ids above,
+one monthly auto-renewable subscription product (`com.cofamio.app.plus.monthly`),
 an In-App Purchase key (→ `APPLE_IAP_KEY*`), the Shared Secret, and a Server
 Notifications V2 URL. **Enable In-App Purchase on the App ID** (App Store Connect →
 Your App → Capabilities → In-App Purchase) — the entitlement file does NOT carry
