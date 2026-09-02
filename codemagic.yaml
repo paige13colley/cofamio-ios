@@ -111,7 +111,27 @@ workflows:
         script: |
           xcode-project use-profiles
 
-      # 5. Bump the build number so every upload is a new, unique build.
+      # 5. Bundle the released web assets into the app. The release app loads
+      #    the SPA from INSIDE the .ipa (cofamioapp://), never a remote page —
+      #    see IOS-BUNDLED-LOAD.md. The web build is published by the website
+      #    pipeline as /release-web/<MARKETING_VERSION>.tar.gz on the live
+      #    origin; this step unpacks it into App/App/www (the Xcode Resources
+      #    copy phase then embeds it in the .app bundle).
+      - name: Bundle web assets (release-web)
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          mkdir -p /tmp/release-web
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" App/App/Info.plist 2>/dev/null || echo "1.0")
+          echo "Bundling web assets for version $VER"
+          curl -fsSL "https://cofamio.ctonew.app/release-web/$VER.tar.gz" -o /tmp/release-web/web.tar.gz
+          rm -rf App/App/www
+          mkdir -p App/App/www
+          tar -xzf /tmp/release-web/web.tar.gz -C App/App/www
+          test -f App/App/www/index.html
+          echo "Bundled www ready ($(du -sh App/App/www | cut -f1))"
+
+      # 6. Bump the build number so every upload is a new, unique build.
       #    Falls back to 1 if git history has no tagged builds yet.
       - name: Increment build number
         script: |
@@ -124,7 +144,7 @@ workflows:
           # This is optional nicety; the archive still works without it.
           echo "Using build number: $BUILD_NUMBER"
 
-      # 6. Build an archive and export an App Store .ipa using xcodebuild
+      # 7. Build an archive and export an App Store .ipa using xcodebuild
       #    (through Codemagic's xcode-project helper, which handles
       #    export-options with method: app-store-connect).
       - name: Build .ipa for App Store

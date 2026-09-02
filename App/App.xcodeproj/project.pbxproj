@@ -12,6 +12,8 @@
         B000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F000000000000000000005 /* Assets.xcassets */; };
         B000000000000000000004 /* StoreKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000007 /* StoreKitManager.swift */; };
         B000000000000000000005 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F000000000000000000008 /* StoreKit.framework */; };
+        B000000000000000000006 /* BundledSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000009 /* BundledSchemeHandler.swift */; };
+        B000000000000000000007 /* www in Resources */ = {isa = PBXBuildFile; fileRef = F000000000000000000010 /* www */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +25,8 @@
         F000000000000000000006 /* CoFamio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CoFamio.app; sourceTree = BUILT_PRODUCTS_DIR; };
         F000000000000000000007 /* StoreKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitManager.swift; sourceTree = "<group>"; };
         F000000000000000000008 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
+        F000000000000000000009 /* BundledSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundledSchemeHandler.swift; sourceTree = "<group>"; };
+        F000000000000000000010 /* www */ = {isa = PBXFileReference; lastKnownFileType = folder; name = www; path = www; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,9 +55,11 @@
                 F000000000000000000001 /* AppDelegate.swift */,
                 F000000000000000000002 /* ViewController.swift */,
                 F000000000000000000007 /* StoreKitManager.swift */,
+                F000000000000000000009 /* BundledSchemeHandler.swift */,
                 F000000000000000000005 /* Assets.xcassets */,
                 F000000000000000000003 /* Info.plist */,
                 F000000000000000000004 /* CoFamio.entitlements */,
+                F000000000000000000010 /* www */,
             );
             path = App;
             sourceTree = "<group>";
@@ -130,6 +136,7 @@
             buildActionMask = 2147483647;
             files = (
                 B000000000000000000003 /* Assets.xcassets in Resources */,
+                B000000000000000000007 /* www in Resources */,
             );
             runOnlyForDeploymentPostprocessing = 0;
         };
@@ -143,6 +150,7 @@
                 B000000000000000000001 /* AppDelegate.swift in Sources */,
                 B000000000000000000002 /* ViewController.swift in Sources */,
                 B000000000000000000004 /* StoreKitManager.swift in Sources */,
+                B000000000000000000006 /* BundledSchemeHandler.swift in Sources */,
             );
             runOnlyForDeploymentPostprocessing = 0;
         };
