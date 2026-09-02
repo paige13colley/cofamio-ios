@@ -57,6 +57,18 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        // Zoom lockdown (2026-09, ROUND 2): the web app pins zoom in its viewport
+        // meta, but WKWebView's underlying UIScrollView can still be pinch-zoomed
+        // or rubber-band panned past the screen. Clamp the native zoom scales to
+        // 1 (pinch-zoom off) and disable bounce so the page cannot be panned
+        // "into the void". Vertical scrolling stays fully enabled — the app's
+        // pages (calendar, records, documents) scroll normally inside this
+        // scroll view; only zoom and overscroll bounce are removed.
+        webView.scrollView.minimumZoomScale = 1.0
+        webView.scrollView.maximumZoomScale = 1.0
+        webView.scrollView.bounces = false
+        webView.scrollView.alwaysBounceVertical = false
+        webView.scrollView.isScrollEnabled = true
         webView.underPageBackgroundColor = UIColor.systemBackground
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
