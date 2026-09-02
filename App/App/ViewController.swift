@@ -2,7 +2,12 @@ import UIKit
 import WebKit
 import Security
 
-/// Hosts the live CoFamio web app in a single, edge-to-edge WKWebView.
+/// Hosts the CoFamio web app in a single, edge-to-edge WKWebView.
+///
+/// The released app loads the SPA from INSIDE the bundle via the
+/// `cofamioapp://` custom scheme (`App/App/www` — see BundledSchemeHandler.swift),
+/// NOT as a remote page from the live origin. Remote HTTPS is used only for
+/// API/billing/push traffic (`appOrigin` + "/api/…"), never for the page itself.
 ///
 /// Bridges (Capacitor-plugin pattern, but plain Apple frameworks):
 ///  - `window.CoFamioNative.secureGet/secureSet/secureRemove` — Keychain-backed
@@ -13,10 +18,11 @@ import Security
 ///  - Deep links `cofamio://…` and universal links route into the web app.
 final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
 
-    /// The live web app origin — the single source of truth for every URL the
-    /// shell builds. The injected bridge, deep-link routing and navigation
-    /// policy all derive from this.
+    /// The live backend origin — used ONLY to build API/billing/push URLs
+    /// (e.g. "…/api/billing/apple/sync"). The PAGE itself is bundled.
     static let appOrigin = "https://cofamio.ctonew.app"
+    /// The custom scheme that serves the bundled SPA (see BundledSchemeHandler).
+    static let appScheme = BundledSchemeHandler.scheme
     static let bundleID = "com.cofamio.app"
 
     private var webView: WKWebView!
@@ -25,6 +31,8 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     private var pushToken: String?
     /// Deep-link path queued before the web view finished first load.
     private var pendingDeepLinkPath: String?
+    /// Native StoreKit2 purchase engine (Phase 2 — iOS In-App Purchase).
+    private let iap = StoreKitManager.shared
 
     // MARK: - View lifecycle
 
@@ -33,6 +41,18 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
 
         let config = WKWebViewConfiguration()
         let contentController = WKUserContentController()
+
+        // Serve the bundled SPA via the cofamioapp:// custom scheme (release
+        // builds load local assets; no remote page). API calls cross to the
+        // live origin over HTTPS via the web layer's absolute fetch shim.
+        if let www = Bundle.main.url(forResource: "www", withExtension: nil, subdirectory: "www") {
+            config.setURLSchemeHandler(
+                BundledSchemeHandler(bundleURL: www),
+                forURLScheme: Self.appScheme
+            )
+        } else {
+            NSLog("[CoFamioNative] WARNING: bundled www/ not found — app will not load")
+        }
 
         // Inject the JS bridge at document start — before the web app's own
         // scripts run — so `window.CoFamioNative` exists on every page. In a
@@ -55,6 +75,18 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        // Zoom lockdown (2026-09, ROUND 2): the web app pins zoom in its viewport
+        // meta, but WKWebView's underlying UIScrollView can still be pinch-zoomed
+        // or rubber-band panned past the screen. Clamp the native zoom scales to
+        // 1 (pinch-zoom off) and disable bounce so the page cannot be panned
+        // "into the void". Vertical scrolling stays fully enabled — the app's
+        // pages (calendar, records, documents) scroll normally inside this
+        // scroll view; only zoom and overscroll bounce are removed.
+        webView.scrollView.minimumZoomScale = 1.0
+        webView.scrollView.maximumZoomScale = 1.0
+        webView.scrollView.bounces = false
+        webView.scrollView.alwaysBounceVertical = false
+        webView.scrollView.isScrollEnabled = true
         webView.underPageBackgroundColor = UIColor.systemBackground
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
@@ -66,19 +98,57 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         ])
 
         // Launch straight into the app area (/app), NOT the marketing site —
-        // that is the owner's intended app behavior. The /app entry route then
-        // routes to the dashboard (persisted session), onboarding, or the login
-        // screen as appropriate. Session persistence via WKWebsiteDataStore()
-        // keeps a returning user logged in (see the comment near config setup).
-        if let url = URL(string: Self.appOrigin + "/app") {
-            webView.load(URLRequest(url: url))
+        // that is the owner's intended app behavior. The bundled SPA shell
+        // (index.html) hydrates the /app route, which then routes to the
+        // dashboard (persisted session), onboarding, or the login screen as
+        // appropriate. Session persistence via WKWebsiteDataStore() +
+        // Keychain keeps a returning user logged in.
+        loadBundledApp()
+
+        // --- StoreKit 2 (Phase 2) ---
+        // Native status changes are delivered into the page via __setIapStatus;
+        // renewals/refunds/purchase-success are forwarded to the backend by a
+        // direct POST /api/billing/apple/sync (cookie copied from the web store).
+        iap.onStatusChange = { [weak self] status in
+            self?.pushIapStatus(status)
         }
+        iap.onSyncTransaction = { [weak self] signedTransactionInfo, environment in
+            self?.postAppleSync(signedTransactionInfo, environment: environment)
+        }
+        // Start observing Transaction.updates (renewals/refunds) and seed status.
+        iap.startListening()
     }
 
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
         // Nothing to do — the web app already handles safe areas (PWA-grade CSS
         // uses env(safe-area-inset-*)). The web view is intentionally edge-to-edge.
+    }
+
+    // MARK: - Bundled app loading
+
+    /// Load the app's own SPA shell from the bundle (cofamioapp://app). The
+    /// bundled index.html hydrates the /app route client-side. Never a remote
+    /// origin page load.
+    private func loadBundledApp() {
+        guard let url = Self.bundledURL(path: "/app") else { return }
+        webView.load(URLRequest(url: url))
+    }
+
+    /// Build a bundled URL for an app path like "/app/calendar" or "app/calendar".
+    /// Scheme is `cofamioapp://`; host is always "app" and the REAL route is the
+    /// path ("/app", "/app/calendar"), so `window.location.pathname` seen by the
+    /// SPA router is correct. The scheme handler joins host+path when resolving
+    /// bundle files (assets live on host "assets").
+    static func bundledURL(path: String, query: String? = nil) -> URL? {
+        var p = path
+        if !p.hasPrefix("/") { p = "/" + p }
+        var comps = URLComponents()
+        comps.scheme = appScheme
+        comps.host = "app"
+        comps.path = p
+        comps.query = query
+        return comps.url
     }
 
     // MARK: - Injected JS bridge
@@ -93,6 +163,8 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
           var pendingDeepLink = null;
           var pushListeners = [];
           var pushTokenValue = null;
+          var iapStatusListeners = [];
+          var iapStatusValue = null;
           function call(action, payload) {
             // postMessage on a WKScriptMessageHandlerWithReply channel returns a
             // Promise that resolves with the native reply value.
@@ -101,18 +173,49 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
             );
           }
           window.CoFamioNative = {
-            isNative: true,
-            platform: 'ios',
-            appVersion: '1.0.0',
-            get pendingDeepLink() { return pendingDeepLink; },
-            get pushToken() { return pushTokenValue; },
-            // --- secure storage (Keychain-backed) ---
-            secureGet: function (key) { return call('secureGet', { key: key }); },
-            secureSet: function (key, value) { return call('secureSet', { key: key, value: value }); },
-            secureRemove: function (key) { return call('secureRemove', { key: key }); },
-            getPushToken: function () { return call('getPushToken', {}); },
-            // --- navigation ---
-            navigate: function (path) { return call('navigate', { path: path }); },
+          isNative: true,
+          platform: 'ios',
+          appVersion: '1.0.0',
+          get pendingDeepLink() { return pendingDeepLink; },
+          get pushToken() { return pushTokenValue; },
+          // --- secure storage (Keychain-backed) ---
+          secureGet: function (key) { return call('secureGet', { key: key }); },
+          secureSet: function (key, value) { return call('secureSet', { key: key, value: value }); },
+          secureRemove: function (key) { return call('secureRemove', { key: key }); },
+          getPushToken: function () { return call('getPushToken', {}); },
+          // --- navigation ---
+          navigate: function (path) { return call('navigate', { path: path }); },
+          // --- StoreKit 2 In-App Purchase (Phase 2) ---
+          // Each method calls into the native StoreKitManager and returns a
+          // Promise. On a plan purchase the resolved object carries the StoreKit2
+          // JWS `signedTransactionInfo` + `environment` for the web layer to send
+          // to POST /api/billing/apple/sync (the native side also posts directly).
+          iap: {
+            available: true,
+            getProducts: function () { return call('iapGetProducts', {}); },
+            purchase: function (planId, appAccountToken) {
+              return call('iapPurchase', { planId: planId, appAccountToken: appAccountToken });
+            },
+            restore: function () { return call('iapRestore', {}); },
+            getCurrentEntitlement: function () { return call('iapGetCurrentEntitlement', {}); },
+            canMakePayments: function () { return call('iapCanMakePayments', {}); }
+          },
+          // --- native -> JS (never call these from the web app) ---
+          onIapStatus: function (fn) {
+            if (typeof fn !== 'function') { return; }
+            iapStatusListeners.push(fn);
+            if (iapStatusValue) { try { fn(iapStatusValue); } catch (e) {} }
+          },
+          offIapStatus: function (fn) {
+            iapStatusListeners = iapStatusListeners.filter(function (f) { return f !== fn; });
+          },
+          __setIapStatus: function (status) {
+            iapStatusValue = status || null;
+            var listeners = iapStatusListeners.slice();
+            for (var i = 0; i < listeners.length; i++) {
+              try { listeners[i](iapStatusValue); } catch (e) {}
+            }
+          },
             // --- push token listeners ---
             onPushToken: function (fn) {
               if (typeof fn !== 'function') { return; }
@@ -191,6 +294,48 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
             }
             DispatchQueue.main.async { [weak self] in self?.webView.load(URLRequest(url: url)) }
             replyHandler(true, nil)
+        case "iapGetProducts":
+            Task { @MainActor in
+                let products = await StoreKitManager.shared.loadProducts()
+                let items = products.map { p -> [String: Any] in
+                    var d: [String: Any] = [
+                        "id": p.id,
+                        "plan": StoreKitManager.plan(forProductId: p.id),
+                        "displayName": p.displayName,
+                        "displayPrice": p.displayPrice,
+                    ]
+                    d["price"] = p.price as NSNumber
+                    return d
+                }
+                replyHandler(items, nil)
+            }
+        case "iapPurchase":
+            guard let planId = body["planId"] as? String else {
+                replyHandler(nil, "cofamioNative: planId required"); return
+            }
+            let tokenStr = body["appAccountToken"] as? String ?? ""
+            guard let appAccountToken = UUID(uuidString: tokenStr) else {
+                replyHandler(["ok": false, "status": "failed",
+                              "error": "Invalid appAccountToken (expected a UUID CoFamio userId)."],
+                             nil)
+                return
+            }
+            Task { @MainActor in
+                let result = await StoreKitManager.shared.purchase(planId: planId, appAccountToken: appAccountToken)
+                replyHandler(result, nil)
+            }
+        case "iapRestore":
+            Task { @MainActor in
+                let result = await StoreKitManager.shared.restorePurchases()
+                replyHandler(result, nil)
+            }
+        case "iapGetCurrentEntitlement":
+            Task { @MainActor in
+                let status = await StoreKitManager.shared.currentEntitlement()
+                replyHandler(status.toJSONObject(), nil)
+            }
+        case "iapCanMakePayments":
+            replyHandler(StoreKitManager.canMakePayments, nil)
         default:
             replyHandler(nil, "cofamioNative: unknown action '\(action)'")
         }
@@ -217,28 +362,32 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         webView.load(request)
     }
 
-    /// Map a native URL (scheme or universal) to a web URL.
+    /// Map a native URL (scheme or universal) to a web URL. App-routing paths
+    /// become BUNDLED cofamioapp:// URLs; https-on-our-origin deep links load
+    /// the bundled path too (never the remote origin page).
     static func webURL(from url: URL) -> URL? {
         if url.scheme?.lowercased() == "cofamio" {
             var path = url.path // "/calendar", "/reset", "" for bare cofamio://
             // A bare cofamio:// (or cofamio:///) opens the app area, mirroring
             // cold-start behavior — never the marketing site.
             if path.isEmpty || path == "/" { path = "/app" }
-            let query = url.query.map { "?" + $0 } ?? ""
-            return URL(string: appOrigin + path + query)
+            return bundledURL(path: path, query: url.query)
         }
         if let scheme = url.scheme?.lowercased(), scheme == "https",
            let host = url.host?.lowercased(), host == "cofamio.ctonew.app" || host.hasSuffix(".cofamio.ctonew.app") {
-            return url // universal link already on our origin
+            // Universal link on our origin → route into the bundled SPA.
+            let path = url.path.isEmpty ? "/app" : url.path
+            return bundledURL(path: path, query: url.query)
         }
         return nil
     }
 
     /// Build a web URL from a path like "/app/calendar" or "app/calendar".
+    /// The page is bundled, so this produces a cofamioapp:// URL.
     static func webURL(path: String) -> URL? {
         var p = path
         if !p.hasPrefix("/") { p = "/" + p }
-        return URL(string: appOrigin + p)
+        return bundledURL(path: p)
     }
 
     static func jsonString(_ s: String) -> String {
@@ -247,6 +396,31 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
             return str
         }
         return "\"\""
+    }
+
+    // MARK: - StoreKit 2 (Phase 2) — status push + backend sync
+
+    /// Deliver a StoreKit entitlement status into the page so the web app can
+    /// refresh its own entitlement state (e.g. after a renewal or refund).
+    func pushIapStatus(_ status: StoreKitManager.EntitlementStatus) {
+        guard webView != nil else { return }
+        let json = (try? JSONSerialization.data(withJSONObject: status.toJSONObject()))
+            .map { String(data: $0, encoding: .utf8) ?? "{}" } ?? "{}"
+        let js = "window.CoFamioNative && window.CoFamioNative.__setIapStatus(" + json + ");"
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    /// Forward a verified StoreKit transaction (JWS + environment) to the backend
+    /// as POST /api/billing/apple/sync, using the session cookie copied from the
+    /// web view's cookie store (or the Keychain session token in bundled mode).
+    /// The web layer performs the authoritative sync too; this covers
+    /// renewals/refunds that arrive while JS isn't foregrounded.
+    func postAppleSync(_ signedTransactionInfo: String, environment: String) {
+        guard let url = URL(string: Self.appOrigin + "/api/billing/apple/sync") else { return }
+        nativeAuthenticatedPost(to: url, body: [
+            "signedTransactionInfo": signedTransactionInfo,
+            "environment": environment,
+        ], logTag: "[CoFamioIAP] apple sync")
     }
 
     // MARK: - Push token delivery
@@ -264,32 +438,72 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
 
     private func postPushTokenNative(_ token: String) {
         guard let url = URL(string: Self.appOrigin + "/api/push/register") else { return }
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        nativeAuthenticatedPost(to: url, body: ["token": token, "platform": "ios"], logTag: "[CoFamioNative] push register")
+    }
+
+    /// POST JSON to an API endpoint with auth: the session cookie copied from the
+    /// web view's cookie store when present (remote-shell and legacy behavior),
+    /// otherwise the Keychain session token as `Authorization: Bearer …` (bundled
+    /// mode — the custom-scheme page origin has no httpOnly cookie, but the server
+    /// accepts the bearer fallback).
+    private func nativeAuthenticatedPost(to url: URL, body: [String: Any], logTag: String) {
+        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+            guard let self else { return }
             let cookieHeader = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
             if !cookieHeader.isEmpty {
-                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+                self.sendNativePost(to: url, body: body, authHeader: ("Cookie", cookieHeader), logTag: logTag)
+                return
             }
-            let body: [String: Any] = ["token": token, "platform": "ios"]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: request) { _, response, error in
-                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-                // 401 = no session in the web view yet; the JS shim retries once
-                // the user logs in (native re-delivers the token on each load).
-                NSLog("[CoFamioNative] push register -> \(status) error=\(error?.localizedDescription ?? "nil")")
-            }.resume()
+            self.fetchKeychainSession { token in
+                guard let token, !token.isEmpty else {
+                    NSLog("\(logTag) -> no session (no cookie, no keychain token)")
+                    return
+                }
+                self.sendNativePost(to: url, body: body, authHeader: ("Authorization", "Bearer \(token)"), logTag: logTag)
+            }
         }
+    }
+
+    /// Read the Keychain session token (stored at login as "ff_session=<token>").
+    private func fetchKeychainSession(_ completion: @escaping (String?) -> Void) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.cofamio.app.secure",
+            kSecAttrAccount as String: "cofamio.session",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data,
+              let raw = String(data: data, encoding: .utf8) else {
+            completion(nil)
+            return
+        }
+        let token = raw.hasPrefix("ff_session=") ? raw : "ff_session=" + raw
+        completion(token)
+    }
+
+    private func sendNativePost(to url: URL, body: [String: Any], authHeader: (String, String), logTag: String) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(authHeader.1, forHTTPHeaderField: authHeader.0)
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            NSLog("\(logTag) -> \(status) error=\(error?.localizedDescription ?? "nil")")
+        }.resume()
     }
 
     // MARK: - WKNavigationDelegate
 
-    /// Navigation policy: keep EVERYTHING http(s) inside the web view.
-    /// Stripe Checkout (checkout.stripe.com and 3DS hosts) MUST stay in-app so
-    /// the shared HTTPCookieStore keeps the user's session and the post-pay
-    /// redirect lands back on cofamio.ctonew.app in the SAME context. Opening
-    /// Stripe in the system browser would break the web-only subscription flow.
+    /// Navigation policy:
+    ///   - cofamioapp:// (bundled SPA) — allow (the scheme handler serves assets).
+    ///   - http/https — keep in-app (Stripe Checkout / 3DS stay in the same cookie
+    ///     context; universal links to our origin route into the bundle).
+    ///   - cofamio:// — handle as a deep link (mapped to a bundled route).
+    ///   - mailto/tel — open in the system handler.
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -300,6 +514,8 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
             return
         }
         switch scheme {
+        case Self.appScheme:
+            decisionHandler(.allow)
         case "http", "https":
             decisionHandler(.allow)
         case "cofamio":

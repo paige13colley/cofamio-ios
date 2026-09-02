@@ -17,22 +17,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     var window: UIWindow?
     private var controller: ViewController?
 
-    // IF_IAP_LATER -----------------------------------------------------------
-    // Web-only subscriptions for launch: billing is the existing web Stripe
-    // Checkout flow, which runs inside the WKWebView (see
-    // ViewController.decidePolicyFor — Stripe domains stay in-app so the shared
-    // cookie store keeps the user logged in and the post-checkout redirect
-    // returns authenticated). To add StoreKit 2 later, WITHOUT rewriting the
-    // shell:
-    //   1. Start `Transaction.updates` here:  Task { for await v in Transaction.updates { ... } }
-    //   2. Resolve/upgrade entitlements via Product.products(for:).
-    //   3. Deliver the result to the web app with a new bridge action, e.g.:
-    //        webView.evaluateJavaScript(
-    //          "window.CoFamioNative && window.CoFamioNative.__setIapStatus && " +
-    //          "window.CoFamioNative.__setIapStatus('active')")
-    //   4. The web app stores it on the same plan fields (see src/lib/db/types.ts
-    //      "Native iOS/Android will attach their own IAP subscription state").
-    // No StoreKit code exists in this build on purpose.
+    // IAP (Phase 2, iOS In-App Purchase) ------------------------------------
+    // Billing for the WEB surface remains Stripe Checkout (runs inside the
+    // WKWebView — see ViewController.decidePolicyFor, which keeps Stripe domains
+    // in-app so the shared cookie store keeps the user logged in and the
+    // post-checkout redirect returns authenticated).
+    //
+    // The NATIVE iOS surface adds a second, coexisting StoreKit2 store so that
+    // purchases made in the app use Apple's auto-renewable subscriptions instead
+    // of Stripe (see StoreKitManager.swift). It is additive and dormant:
+    //   • StoreKitManager.startListening() is kicked off in ViewController.viewDidLoad
+    //     (Transaction.updates → renewals/refunds, current-entitlement seeding).
+    //   • The web layer calls the native purchase sheet when running on iOS via
+    //     window.CoFamioNative.iap.* ; on web/desktop Stripe is used unchanged.
+    //   • The whole Apple path is additionally gated server-side by APPLE_IAP_ENABLED.
+    // No StoreKit code is required in this file itself.
     // ------------------------------------------------------------------------
 
     func application(

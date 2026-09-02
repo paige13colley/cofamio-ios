@@ -1,0 +1,1 @@
+function t(c){const e=new Map;for(const n of c){const i=n.coparents||[];for(const o of i){let r=e.get(o.id);r||(r={id:o.id,name:o.name,color:o.color,children:[]},e.set(o.id,r)),r.children.some(s=>s.id===n.id)||r.children.push(n)}}return Array.from(e.values())}export{t as g};
