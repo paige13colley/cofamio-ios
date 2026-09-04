@@ -45,13 +45,25 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         // Serve the bundled SPA via the cofamioapp:// custom scheme (release
         // builds load local assets; no remote page). API calls cross to the
         // live origin over HTTPS via the web layer's absolute fetch shim.
-        if let www = Bundle.main.url(forResource: "www", withExtension: nil, subdirectory: "www") {
+        //
+        // Resolve the bundled www/ directory under ANY layout the Xcode build
+        // can produce (see bundledWWWURL()): a www/www group copy, a www
+        // folder-reference copy at <bundle>/www (the Build 2 layout — the old
+        // single subdirectory lookup looked for <bundle>/www/www, missed, and
+        // the handler was never registered, leaving a white screen), or the
+        // parent of the SPA's www/index.html.
+        if let www = Self.bundledWWWURL() {
             config.setURLSchemeHandler(
                 BundledSchemeHandler(bundleURL: www),
                 forURLScheme: Self.appScheme
             )
         } else {
-            NSLog("[CoFamioNative] WARNING: bundled www/ not found — app will not load")
+            NSLog("[CoFamioNative] WARNING: bundled www/ not found (checked www/www, www folder root, and www/index.html) — falling back to live site")
+            // webView is created later in viewDidLoad, so defer the live load
+            // until the next runloop turn (it is guaranteed non-nil by then).
+            DispatchQueue.main.async { [weak self] in
+                self?.loadLiveFallback()
+            }
         }
 
         // Inject the JS bridge at document start — before the web app's own
@@ -126,6 +138,44 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     }
 
     // MARK: - Bundled app loading
+
+    /// Resolve the bundled SPA's `www` directory, trying each layout the Xcode
+    /// build can actually produce, in order:
+    ///   1. `Bundle.main.url(forResource:"www", … subdirectory:"www")` — a
+    ///      blue-folder group copy lands at <bundle>/www/www.
+    ///   2. `Bundle.main.url(forResource:"www", …)` — a folder-reference copy
+    ///      lands at <bundle>/www (Build 2 layout; the old single lookup
+    ///      checked only #1 and missed this, so the scheme handler was never
+    ///      registered and the web view stayed white).
+    ///   3. `www/index.html` — with its parent directory as the bundle root
+    ///      (covers a layout where only the HTML file is identifiable).
+    /// Returns the first non-nil, or nil if no variant is present.
+    private static func bundledWWWURL() -> URL? {
+        if let www = Bundle.main.url(forResource: "www", withExtension: nil, subdirectory: "www") {
+            return www
+        }
+        if let www = Bundle.main.url(forResource: "www", withExtension: nil) {
+            // Folder-reference copies land at <bundle>/www; guard against the
+            // lookup returning a file (or a path without the www name).
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: www.path, isDirectory: &isDirectory),
+               isDirectory.boolValue, www.lastPathComponent == "www" {
+                return www
+            }
+        }
+        if let index = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "www") {
+            return index.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Fallback used when the bundled www/ is missing: load the live site's
+    /// /app so the app never sits on a white screen. Kept minimal — the custom
+    /// scheme handler (bundled mode) remains the primary path.
+    private func loadLiveFallback() {
+        guard let url = URL(string: "https://cofamio.ctonew.app/app") else { return }
+        webView.load(URLRequest(url: url))
+    }
 
     /// Load the app's own SPA shell from the bundle (cofamioapp://app). The
     /// bundled index.html hydrates the /app route client-side. Never a remote
