@@ -87,14 +87,22 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
-        // Zoom lockdown (2026-09, ROUND 2): the web app pins zoom in its viewport
+        // Zoom lockdown (2026-09, ROUND 3): the web app pins zoom in its viewport
         // meta, but WKWebView's underlying UIScrollView can still be pinch-zoomed
-        // or rubber-band panned past the screen. Clamp the native zoom scales to
-        // 1 (pinch-zoom off) and disable bounce so the page cannot be panned
-        // "into the void". Vertical scrolling stays fully enabled — the app's
-        // pages (calendar, records, documents) scroll normally inside this
+        // or rubber-band panned past the screen. Clamp the native zoom scale to a
+        // maximum of 1 (pinch-zoom off) and disable bounce so the page cannot be
+        // panned "into the void". Vertical scrolling stays fully enabled — the
+        // app's pages (calendar, records, documents) scroll normally inside this
         // scroll view; only zoom and overscroll bounce are removed.
-        webView.scrollView.minimumZoomScale = 1.0
+        //
+        // ROUND 3 (Build 4 zoom fix): minimumZoomScale was 1.0, which made
+        // WKWebView treat content wider than the viewport as already zoomed-in
+        // ("everything looks enlarged" on a physical iPhone). Lowering the
+        // minimum to 0.1 lets the page fit the device width at scale 1 — this
+        // prevents the "content wider than viewport appears magnified" artifact
+        // while maximumZoomScale = 1.0 still disables pinch-zoom. The app UI now
+        // fills the device width with no horizontal scroll and no enlargement.
+        webView.scrollView.minimumZoomScale = 0.1
         webView.scrollView.maximumZoomScale = 1.0
         webView.scrollView.bounces = false
         webView.scrollView.alwaysBounceVertical = false
