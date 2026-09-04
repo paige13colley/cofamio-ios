@@ -243,6 +243,15 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
           getPushToken: function () { return call('getPushToken', {}); },
           // --- navigation ---
           navigate: function (path) { return call('navigate', { path: path }); },
+          // --- native print (iOS) ---
+          // Renders print-friendly HTML via UIPrintInteractionController (the
+          // standard iOS print sheet with printer picker + Save-to-PDF).
+          // window.print() is a silent no-op in WKWebView, so the web app's
+          // Print buttons call this when CoFamioNative.isNative. Resolves
+          // { ok: true } when the sheet is presented (user may still cancel
+          // in the sheet itself), { ok: false, error } otherwise.
+          print: function (html) { return call('print', { html: html || '' }); },
+          printHTML: function (html) { return call('print', { html: html || '' }); },
           // --- StoreKit 2 In-App Purchase (Phase 2) ---
           // Each method calls into the native StoreKitManager and returns a
           // Promise. On a plan purchase the resolved object carries the StoreKit2
@@ -352,6 +361,37 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
             }
             DispatchQueue.main.async { [weak self] in self?.webView.load(URLRequest(url: url)) }
             replyHandler(true, nil)
+        case "print":
+            // Native print: render the web layer's print-friendly HTML through
+            // UIPrintInteractionController. Must run on the main thread and
+            // present from this view controller. The HTML string is loaded into
+            // an offscreen UIPrintFormatter via UIMarkupTextPrintFormatter.
+            let html = body["html"] as? String ?? ""
+            guard !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                replyHandler(nil, "cofamioNative: html required for print"); return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else {
+                    replyHandler(["ok": false, "error": "Print view unavailable."] as [String: Any], nil)
+                    return
+                }
+                let printInfo = UIPrintInfo(dictionary: nil)
+                printInfo.outputType = .general
+                printInfo.jobName = "CoFamio \u{2014} Calendar"
+                let controller = UIPrintInteractionController.shared
+                controller.printInfo = printInfo
+                controller.printFormatter = UIMarkupTextPrintFormatter(markupText: html)
+                controller.present(animated: true) { (_, completed, error) in
+                    if let error = error {
+                        replyHandler(["ok": false, "error": error.localizedDescription] as [String: Any], nil)
+                    } else if completed {
+                        replyHandler(["ok": true] as [String: Any], nil)
+                    } else {
+                        // User dismissed the sheet without printing — not an error.
+                        replyHandler(["ok": true, "cancelled": true] as [String: Any], nil)
+                    }
+                }
+            }
         case "iapGetProducts":
             Task { @MainActor in
                 let products = await StoreKitManager.shared.loadProducts()
