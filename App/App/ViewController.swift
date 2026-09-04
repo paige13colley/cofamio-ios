@@ -61,7 +61,7 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         contentController.addUserScript(bridgeUserScript())
         // Reply-style handler: JS `postMessage(...)` returns a Promise whose
         // resolution value is the native reply.
-        contentController.add(self, name: "cofamioNative")
+        contentController.add(self, contentWorld: .page, name: "cofamioNative")
         config.userContentController = contentController
 
         // WKWebsiteDataStore.default() persists cookies (incl. the httpOnly
