@@ -270,7 +270,7 @@ final class StoreKitManager: NSObject {
         "cofamio" // single-plan pricing — every Apple product maps to "cofamio"
     }
 
-    static func environmentLabel(_ env: Transaction.Environment) -> String {
+    static func environmentLabel(_ env: AppStore.Environment) -> String {
         switch env {
         case .sandbox: return "Sandbox"
         case .xcode:   return "Xcode"
