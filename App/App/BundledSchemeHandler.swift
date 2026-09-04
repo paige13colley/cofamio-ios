@@ -13,6 +13,24 @@ import WebKit
 ///   cofamioapp://icons/<file>    → www/icons/<file>
 ///   cofamioapp://manifest.webmanifest | sw.js | offline.html → bundled copy
 ///
+/// The built SPA references its own files with ABSOLUTE `cofamioapp://…` URLs
+/// whose "directory" is the HOST (`cofamioapp://assets/x.js`, `cofamioapp://icons/
+/// icon.png`, `cofamioapp://manifest.webmanifest`) and whose real path is the
+/// URL path. Those directory hosts are normalized back into an absolute path
+/// (`/assets/x.js`, `/manifest.webmanifest`, …) before the lookup below.
+/// Absolute references that keep the "app" host (`cofamioapp://app/assets/x.js`,
+/// `cofamioapp://app/icons/…`, `cofamioapp://app/manifest.webmanifest` etc.) are
+/// normalized the same way.
+///
+/// Every response is served with `Access-Control-Allow-Origin: *`: the SPA's ES
+/// module scripts are fetched from `cofamioapp://assets/…` — a DIFFERENT origin
+/// than the `cofamioapp://app` page — so WebKit CORS-checks those module fetches
+/// even though the scheme is private. `cofamioapp://` is a local-only scheme
+/// serving only bundled static files (API calls never flow through this handler),
+/// so a wildcard ACAO is safe and is the standard fix for WKURLSchemeHandler +
+/// module scripts. Without it the hydration JS is blocked, the module graph
+/// never runs, and the app hangs forever on the splash.
+///
 /// API calls are NOT proxied here (WKURLSchemeTask cannot carry POST bodies).
 /// Instead the web layer (native.ts fetch shim) sends relative `fetch("/api/…")`
 /// calls as absolute HTTPS + `Authorization: Bearer <Keychain session token>`
@@ -37,10 +55,31 @@ public final class BundledSchemeHandler: NSObject, WKURLSchemeHandler {
             urlSchemeTask.didFailWithError(URLError(.badURL))
             return
         }
-        // cofamioapp://assets/x.js → host "assets", path "/x.js". Join them so
+        // cofamioapp://assets/x.js → host "assets", path "/x.js"; join them so
         // the lookup below sees the full "/assets/x.js".
         let host = url.host ?? ""
-        let path = host + (url.path.isEmpty ? "/" : url.path)
+        let rawPath = url.path
+
+        // Belt-and-braces normalization so every URL shape the SPA can emit
+        // resolves to the same canonical absolute path:
+        //  • directory hosts (the way the built index.html actually references
+        //    files): cofamioapp://assets/x.js → "/assets/x.js",
+        //    cofamioapp://manifest.webmanifest → "/manifest.webmanifest"
+        //  • app-hosted absolute refs: cofamioapp://app/assets/x.js → "/assets/x.js"
+        //  • everything else keeps the historical host+path join (page routes,
+        //    deep links, cofamioapp:///app) — unchanged.
+        var path: String
+        if host == "assets" || host == "icons" || host == "manifest.webmanifest"
+            || host == "sw.js" || host == "offline.html" || host == "index.html" {
+            path = "/" + host + rawPath
+        } else if host == "app"
+            && (rawPath.hasPrefix("/assets/") || rawPath.hasPrefix("/icons/")
+                || rawPath == "/manifest.webmanifest" || rawPath == "/sw.js"
+                || rawPath == "/offline.html" || rawPath == "/index.html") {
+            path = rawPath
+        } else {
+            path = host + (rawPath.isEmpty ? "/" : rawPath)
+        }
 
         let relativePath: String
         if path == "/" || path == "/app" || path == "/app/" || path == "/index.html" || path == "/app.html" {
@@ -57,6 +96,9 @@ public final class BundledSchemeHandler: NSObject, WKURLSchemeHandler {
 
         let fileURL = bundleRoot.appendingPathComponent(relativePath)
         guard let data = try? Data(contentsOf: fileURL) else {
+            // Log misses so a future breakage shows up in Console.app / the
+            // Xcode device console instead of a silent splash hang.
+            NSLog("[CoFamioNative] BundledSchemeHandler: no bundled file for request %@ (resolved relativePath %@)", url.absoluteString, relativePath)
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
@@ -65,7 +107,14 @@ public final class BundledSchemeHandler: NSObject, WKURLSchemeHandler {
             url: url,
             statusCode: 200,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": mime, "Cache-Control": "no-cache"]
+            headerFields: [
+                "Content-Type": mime,
+                "Cache-Control": "no-cache",
+                // See type doc: module scripts cross origins between the "app"
+                // page and "assets" resource URLs; wildcard ACAO is required
+                // (and safe) for this private, local-only scheme.
+                "Access-Control-Allow-Origin": "*",
+            ]
         ) ?? URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)
         urlSchemeTask.didReceive(response)
         urlSchemeTask.didReceive(data)
