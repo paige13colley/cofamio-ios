@@ -145,7 +145,7 @@ final class StoreKitManager: NSObject {
                 let transaction = try Self.checkVerified(verification)
                 await transaction.finish()
                 let signed = verification.jwsRepresentation   // the JWS the backend verifies
-                let env = Self.environmentLabel(transaction.environment)
+                let env = Self.environmentLabel(transaction.environmentStringRepresentation)
                 let status = entitlement(forPlan: Self.plan(forProductId: transaction.productID),
                                          productId: transaction.productID,
                                          environment: env,
@@ -210,7 +210,7 @@ final class StoreKitManager: NSObject {
         }
         let status = entitlement(forPlan: Self.plan(forProductId: tx.productID),
                                  productId: tx.productID,
-                                 environment: Self.environmentLabel(tx.environment),
+                                 environment: Self.environmentLabel(tx.environmentStringRepresentation),
                                  expiryMs: tx.expirationDate?.timeIntervalSince1970)
         lastStatus = status
         return status
@@ -230,10 +230,10 @@ final class StoreKitManager: NSObject {
             do {
                 let transaction = try Self.checkVerified(update)
                 // Renewal / refund / reset — push to the backend and refresh status.
-                onSyncTransaction?(update.jwsRepresentation, Self.environmentLabel(transaction.environment))
+                onSyncTransaction?(update.jwsRepresentation, Self.environmentLabel(transaction.environmentStringRepresentation))
                 let status = entitlement(forPlan: Self.plan(forProductId: transaction.productID),
                                          productId: transaction.productID,
-                                         environment: Self.environmentLabel(transaction.environment),
+                                         environment: Self.environmentLabel(transaction.environmentStringRepresentation),
                                          expiryMs: transaction.expirationDate?.timeIntervalSince1970)
                 publish(status)
                 await transaction.finish()
@@ -270,12 +270,15 @@ final class StoreKitManager: NSObject {
         "cofamio" // single-plan pricing — every Apple product maps to "cofamio"
     }
 
-    static func environmentLabel(_ env: AppStore.Environment) -> String {
+    static func environmentLabel(_ env: String) -> String {
+        // environmentStringRepresentation yields "Sandbox", "Xcode" or "Production".
+        // Normalize anything unexpected to "Production" so the backend/JS layer
+        // always sees one of the three known labels.
         switch env {
-        case .sandbox: return "Sandbox"
-        case .xcode:   return "Xcode"
-        case .production: return "Production"
-        @unknown default: return "Production"
+        case "Sandbox": return "Sandbox"
+        case "Xcode":   return "Xcode"
+        case "Production": return "Production"
+        default: return "Production"
         }
     }
 
