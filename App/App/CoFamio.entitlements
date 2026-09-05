@@ -3,14 +3,26 @@
 <plist version="1.0">
 <dict>
     <!--
-    Push Notifications capability. Xcode rewrites aps-environment to "production"
-    automatically when building with a distribution provisioning profile, so
-    "development" here is correct for dev builds AND App Store archives.
+    Push Notifications capability (APNs).
+
+    aps-environment MUST be present and valid in the code signature for APNs
+    registration to succeed on a real device. The "no valid 'aps-environment'
+    entitlement string found" error means this key was missing from (or not
+    embedded via) the entitlements/profile used to sign the build.
+
+    The value is driven by the per-configuration build setting APS_ENVIRONMENT
+    (Debug = development, Release = production) so this single file is correct
+    for physical-device dev builds AND for the distribution/TestFlight archive.
+    Xcode additionally re-applies the value from the signing provisioning
+    profile at code-sign time; keep this key present in every configuration.
+    The "Push Notifications" capability must also be enabled on the App ID
+    com.cofamio.app and included in the signing profiles (owner checklist in
+    README-UPLOAD.md).
     (To double-check after archival: open the .ipa and inspect
     embedded.mobileprovision / the aps-environment entitlement.)
     -->
     <key>aps-environment</key>
-    <string>development</string>
+    <string>$(APS_ENVIRONMENT)</string>
     <!--
     In-App Purchase (Phase 2): StoreKit2 auto-renewable subscriptions do NOT
     require an entitlement key in this file. The "In-App Purchase" capability
@@ -20,5 +32,5 @@
     README-UPLOAD.md). The old "com.apple.developer.in-app-payments"
     entitlement is for Apple Pay, not IAP, and must NOT be added here.
     -->
-
+</dict>
 </plist>
