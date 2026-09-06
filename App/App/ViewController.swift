@@ -489,11 +489,13 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     }
 
     static func jsonString(_ s: String) -> String {
-        if let data = try? JSONSerialization.data(withJSONObject: s),
-           let str = String(data: data, encoding: .utf8) {
-            return str
-        }
-        return "\"\""
+        // JSONEncoder supports top-level fragments (a bare String);
+        // NSJSONSerialization data(withJSONObject:) rejects them
+        // ("Invalid top-level type in JSON write") and crashed the app.
+        // Result is a quoted, escaped JSON string literal safe to embed in JavaScript.
+        guard let data = try? JSONEncoder().encode(s),
+              let str = String(data: data, encoding: .utf8) else { return "\"\"" }
+        return str
     }
 
     // MARK: - StoreKit 2 (Phase 2) — status push + backend sync
@@ -501,11 +503,14 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     /// Deliver a StoreKit entitlement status into the page so the web app can
     /// refresh its own entitlement state (e.g. after a renewal or refund).
     func pushIapStatus(_ status: StoreKitManager.EntitlementStatus) {
-        guard webView != nil else { return }
         let json = (try? JSONSerialization.data(withJSONObject: status.toJSONObject()))
             .map { String(data: $0, encoding: .utf8) ?? "{}" } ?? "{}"
-        let js = "window.CoFamioNative && window.CoFamioNative.__setIapStatus(" + json + ");"
-        webView.evaluateJavaScript(js, completionHandler: nil)
+        // StoreKit callbacks arrive from a background Task context; WebKit calls need main.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.webView != nil else { return }
+            let js = "window.CoFamioNative && window.CoFamioNative.__setIapStatus(" + json + ");"
+            self.webView.evaluateJavaScript(js, completionHandler: nil)
+        }
     }
 
     /// Forward a verified StoreKit transaction (JWS + environment) to the backend
@@ -528,10 +533,16 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     /// directly with the session cookie copied from the web view's cookie store.
     func savePushToken(_ token: String) {
         pushToken = token
-        guard webView != nil else { return } // applied once the webview loads (didFinish)
-        let js = "window.CoFamioNative && window.CoFamioNative.__setPushToken(" + Self.jsonString(token) + ");"
-        webView.evaluateJavaScript(js, completionHandler: nil)
-        postPushTokenNative(token)
+        // didRegisterForRemoteNotificationsWithDeviceToken runs off the main
+        // thread; WebKit calls (evaluateJavaScript + the cookie-store read in
+        // nativeAuthenticatedPost) must hop to main. pushToken is set above so
+        // didFinish re-delivery still works when the web view isn't ready yet.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.webView != nil else { return } // applied once the webview loads (didFinish)
+            let js = "window.CoFamioNative && window.CoFamioNative.__setPushToken(" + Self.jsonString(token) + ");"
+            self.webView.evaluateJavaScript(js, completionHandler: nil)
+            self.postPushTokenNative(token)
+        }
     }
 
     private func postPushTokenNative(_ token: String) {
@@ -545,19 +556,26 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     /// mode — the custom-scheme page origin has no httpOnly cookie, but the server
     /// accepts the bearer fallback).
     private func nativeAuthenticatedPost(to url: URL, body: [String: Any], logTag: String) {
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+        // The WKHTTPCookieStore read is a WebKit API and must run on the main
+        // thread: postAppleSync arrives from StoreKitManager's background Task
+        // context, so hop here even though savePushToken already hops for its
+        // own caller.
+        DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let cookieHeader = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
-            if !cookieHeader.isEmpty {
-                self.sendNativePost(to: url, body: body, authHeader: ("Cookie", cookieHeader), logTag: logTag)
-                return
-            }
-            self.fetchKeychainSession { token in
-                guard let token, !token.isEmpty else {
-                    NSLog("\(logTag) -> no session (no cookie, no keychain token)")
+            self.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+                guard let self else { return }
+                let cookieHeader = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+                if !cookieHeader.isEmpty {
+                    self.sendNativePost(to: url, body: body, authHeader: ("Cookie", cookieHeader), logTag: logTag)
                     return
                 }
-                self.sendNativePost(to: url, body: body, authHeader: ("Authorization", "Bearer \(token)"), logTag: logTag)
+                self.fetchKeychainSession { token in
+                    guard let token, !token.isEmpty else {
+                        NSLog("\(logTag) -> no session (no cookie, no keychain token)")
+                        return
+                    }
+                    self.sendNativePost(to: url, body: body, authHeader: ("Authorization", "Bearer \(token)"), logTag: logTag)
+                }
             }
         }
     }
