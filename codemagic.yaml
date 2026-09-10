@@ -113,17 +113,26 @@ workflows:
 
       # 5. Bundle the released web assets into the app. The release app loads
       #    the SPA from INSIDE the .ipa (cofamioapp://), never a remote page —
-      #    see IOS-BUNDLED-LOAD.md. The web build is published by the website
-      #    pipeline as /release-web/<MARKETING_VERSION>.tar.gz on the live
-      #    origin; this step unpacks it into App/App/www (the Xcode Resources
-      #    copy phase then embeds it in the .app bundle).
+      #    see IOS-BUNDLED-LOAD.md (the Xcode Resources copy phase embeds
+      #    App/App/www in the .app bundle).
+      #
+      #    The COMMITTED App/App/www snapshot (refresh via PRs — e.g. 4ffbf82 =
+      #    calendar redesign) is the source of truth. The live-origin
+      #    /release-web/<ver>.tar.gz artifact used to be unpacked over it on
+      #    every build, but it went STALE and was silently shipping the OLD
+      #    calendar UI. Only fall back to that tarball if the committed www is
+      #    missing (e.g. stripped checkout).
       - name: Bundle web assets (release-web)
         script: |
           set -e
           cd "$CM_BUILD_DIR"
+          if [ -f App/App/www/index.html ]; then
+            echo "Using committed App/App/www (entry: $(grep -aoE 'assets/index-[A-Za-z0-9_-]+\.js' App/App/www/index.html | head -1 || true))"
+            exit 0
+          fi
           mkdir -p /tmp/release-web
           VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" App/App/Info.plist 2>/dev/null || echo "1.0")
-          echo "Bundling web assets for version $VER"
+          echo "Committed www missing; fetching live tarball for version $VER"
           curl -fsSL "https://cofamio.ctonew.app/release-web/$VER.tar.gz" -o /tmp/release-web/web.tar.gz
           rm -rf App/App/www
           mkdir -p App/App/www
