@@ -153,7 +153,7 @@ App Store Connect → **CoFamio → App Store** tab. Fill in the required fields
 | **Rating** | Complete the questionnaire — this app has no user-generated content; 4+ recommended. |
 | **Privacy policy URL** | https://cofamio.ctonew.app/privacy |
 | **Review information — Sign-in** | Provide a test account (email + password) so App Review can log in; add a note that the app wraps the live site and all billing is via the web checkout. |
-| **In-App Purchases** | Two auto-renewable subscription products (Plus / Complete — see §10). Before release, confirm they're approved and live in App Store Connect and note the current status in Review Notes. |
+| **In-App Purchases** | One auto-renewable subscription product (CoFamio — see §10). Before release, confirm it's approved and live in App Store Connect and note the current status in Review Notes. |
 
 Then **Add for Review** → wait (days, usually). You can also choose
 **Manually release** to control when it goes live.
@@ -178,16 +178,15 @@ How it works (for the record):
   (`signedTransactionInfo`) + environment** back to the web layer, which POSTs
   `POST /api/billing/apple/sync`. The native shell also POSTs that sync directly
   as a fallback, and listens to `Transaction.updates` for renewals/refunds.
-- The two product ids are **`com.cofamio.app.plus.monthly`** (Plus) and
-  **`com.cofamio.app.complete.monthly`** (Complete) — the same values the web
-  server maps via `APPLE_IAP_PRODUCT_PLUS` / `APPLE_IAP_PRODUCT_COMPLETE`.
+- The single product id is **`com.cofamio.app.plus.monthly`** (CoFamio Premium @ $9.99/mo) —
+  the same value the web server maps via `APPLE_IAP_PRODUCT`.
 - The whole Apple path is **dormant** until the operator sets `APPLE_IAP_ENABLED=true`
   with the App Store Connect credentials (see `APPLE-IAP-DESIGN.md`). No purchase is
   made and no entitlement is created just by building/running this branch.
 
 ### Setting up products in App Store Connect (owner, once)
 Follow the checklist in `APPLE-IAP-DESIGN.md` §6: create a Subscription Group,
-two monthly auto-renewable subscription products with the two product ids above,
+one monthly auto-renewable subscription product (`com.cofamio.app.plus.monthly`),
 an In-App Purchase key (→ `APPLE_IAP_KEY*`), the Shared Secret, and a Server
 Notifications V2 URL. **Enable In-App Purchase on the App ID** (App Store Connect →
 Your App → Capabilities → In-App Purchase) — the entitlement file does NOT carry

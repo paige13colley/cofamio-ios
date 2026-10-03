@@ -5,34 +5,18 @@
   ],
   "products" : [
     {
-      "displayPrice" : "7.99",
+      "displayPrice" : "9.99",
       "familyShareable" : true,
-      "internalID" : "cofamio-plus-monthly",
+      "internalID" : "cofamio-monthly",
       "localizations" : [
         {
-          "description" : "CoFamio Plus — the full family organizer: unlimited children, calendar, tasks, reminders, shopping, contacts, organizers, caregiver access, and more.",
-          "displayName" : "CoFamio Plus",
+          "description" : "CoFamio — the complete family organizer and co-parenting platform: unlimited children, calendar, custody schedules, tasks, reminders, shopping, contacts, organizers, shared expenses, co-parent messaging, shared documents, caregiver access, and more.",
+          "displayName" : "CoFamio Premium",
           "locale" : "en_US"
         }
       ],
       "productID" : "com.cofamio.app.plus.monthly",
-      "referenceName" : "Plus Monthly",
-      "subscriptionGroupID" : "cofamio-plans",
-      "type" : "AutoRenewableSubscription"
-    },
-    {
-      "displayPrice" : "11.99",
-      "familyShareable" : true,
-      "internalID" : "cofamio-complete-monthly",
-      "localizations" : [
-        {
-          "description" : "CoFamio Complete — everything in Plus plus advanced co-parenting: custody schedules, split shared expenses, co-parent messaging, shared documents, and more.",
-          "displayName" : "CoFamio Complete",
-          "locale" : "en_US"
-        }
-      ],
-      "productID" : "com.cofamio.app.complete.monthly",
-      "referenceName" : "Complete Monthly",
+      "referenceName" : "CoFamio Premium",
       "subscriptionGroupID" : "cofamio-plans",
       "type" : "AutoRenewableSubscription"
     }
