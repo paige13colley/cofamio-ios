@@ -20,7 +20,19 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
 
     /// The live backend origin — used ONLY to build API/billing/push URLs
     /// (e.g. "…/api/billing/apple/sync"). The PAGE itself is bundled.
-    static let appOrigin = "https://cofamio.ctonew.app"
+    ///
+    /// TEMPORARY FALLBACK (2026-10): the friendly hostname `cofamio.ctonew.app`
+    /// is currently down (its binding was removed at the platform edge), so the
+    /// shell talks to the hash-based production host instead. `appOrigin` is the
+    /// single source of truth for BOTH the native API/billing/push URLs and the
+    /// web-layer override in `bridgeUserScript()` — to go back to the friendly
+    /// hostname, change the one assignment below (`apiOriginFallback` →
+    /// `apiOriginPrimary`); nothing else needs editing.
+    static let apiOriginPrimary = "https://cofamio.ctonew.app"
+    /// Fallback origin used while `apiOriginPrimary` is down. Same production
+    /// deployment, hash hostname.
+    static let apiOriginFallback = "https://7923a795c396982e654b32182e912be1.ctonew.app"
+    static let appOrigin = apiOriginFallback
     /// The custom scheme that serves the bundled SPA (see BundledSchemeHandler).
     static let appScheme = BundledSchemeHandler.scheme
     static let bundleID = "com.cofamio.app"
@@ -218,6 +230,15 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         (function () {
           if (window.__cofamioBridgeInstalled) { return; }
           window.__cofamioBridgeInstalled = true;
+          // API-origin override for the web layer. The bundled SPA installs a
+          // fetch shim at module scope that reads this value (native.ts /
+          // `nativeApiBase()`), rewriting cofamioapp://…/api/… requests to this
+          // origin — so it must be set here, at document start, before the app
+          // bundle runs. Interpolated from ViewController.appOrigin (the SINGLE
+          // constant above) so the native URLs and the web-layer URLs can never
+          // drift; that constant currently points at the hash-host fallback
+          // because the friendly hostname cofamio.ctonew.app is down.
+          window.__COFAMIO_API_ORIGIN__ = '\(Self.appOrigin)';
           var pendingDeepLink = null;
           var pushListeners = [];
           var pushTokenValue = null;
