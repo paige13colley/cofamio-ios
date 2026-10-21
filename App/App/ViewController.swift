@@ -15,6 +15,9 @@ import Security
 ///    (iOS 15+; our deployment target).
 ///  - `window.CoFamioNative.pushToken / onPushToken` — APNs device token
 ///    delivered into the page; the web app POSTs it to /api/push/register.
+///  - `window.CoFamioNative.print/printHTML` — UIPrintInteractionController.
+///  - `window.CoFamioNative.download(fileName, mimeType, base64)` — writes the
+///    document bytes to a temp file and presents the system share sheet.
 ///  - Deep links `cofamio://…` and universal links route into the web app.
 final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
 
@@ -273,6 +276,20 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
           // in the sheet itself), { ok: false, error } otherwise.
           print: function (html) { return call('print', { html: html || '' }); },
           printHTML: function (html) { return call('print', { html: html || '' }); },
+          // --- native file save/share (iOS) ---
+          // The web layer already fetched the document bytes through /api; it
+          // hands them here as base64. Native writes a temp file and presents
+          // the system share sheet (Save to Files, Mail, AirDrop…). This is the
+          // ONLY way to hand a file to the OS from WKWebView: `<a download>` with
+          // a data:/blob: URL is a NAVIGATION, and our navigation policy cancels
+          // schemes it does not know (see decidePolicyFor), which is exactly why
+          // the old Download button did nothing on device.
+          // Resolves { ok:true } once the file is written and the sheet is
+          // presented, { ok:true, cancelled:true } if the user dismisses it,
+          // { ok:false, error } on failure.
+          download: function (fileName, mimeType, base64) {
+            return call('download', { fileName: fileName || '', mimeType: mimeType || '', base64: base64 || '' });
+          },
           // --- StoreKit 2 In-App Purchase (Phase 2) ---
           // Each method calls into the native StoreKitManager and returns a
           // Promise. On a plan purchase the resolved object carries the StoreKit2
@@ -413,6 +430,65 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
                     }
                 }
             }
+        case "download":
+            // Native file save / share for the web layer's document Download
+            // button. The web layer has already fetched the bytes through
+            // /api/documents/<id>/content, so this is pure I/O: base64 -> temp
+            // file -> system share sheet ("Save to Files", Mail, AirDrop…).
+            // Replaces the `<a download href="data:…">` approach, which is a
+            // navigation this app's policy cancels (the button did nothing).
+            let fileName = body["fileName"] as? String ?? ""
+            let base64 = body["base64"] as? String ?? ""
+            let mimeType = body["mimeType"] as? String ?? "application/octet-stream"
+            guard !fileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !base64.isEmpty else {
+                replyHandler(nil, "cofamioNative: fileName and base64 required for download"); return
+            }
+            guard let data = Data(base64Encoded: base64), !data.isEmpty else {
+                replyHandler(["ok": false, "error": "The file could not be decoded."] as [String: Any], nil)
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else {
+                    replyHandler(["ok": false, "error": "Save view unavailable."] as [String: Any], nil)
+                    return
+                }
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(Self.safeFileName(fileName, mimeType: mimeType))
+                do {
+                    // Overwrite: a second save of the same document must not fail.
+                    try? FileManager.default.removeItem(at: url)
+                    try data.write(to: url, options: .atomic)
+                } catch {
+                    replyHandler(["ok": false, "error": "Could not prepare the file."] as [String: Any], nil)
+                    return
+                }
+                let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                // iPad / popover: the share sheet needs an anchor or it traps.
+                if let pop = sheet.popoverPresentationController {
+                    pop.sourceView = self.view
+                    pop.sourceRect = CGRect(
+                        x: self.view.bounds.midX,
+                        y: self.view.bounds.maxY - 60,
+                        width: 0,
+                        height: 0
+                    )
+                    pop.permittedArrowDirections = []
+                }
+                sheet.completionWithItemsHandler = { _, completed, _, error in
+                    if let error = error {
+                        replyHandler(["ok": false, "error": error.localizedDescription] as [String: Any], nil)
+                    } else if completed {
+                        replyHandler(["ok": true] as [String: Any], nil)
+                    } else {
+                        // Dismissed without choosing a destination — not an error.
+                        replyHandler(["ok": true, "cancelled": true] as [String: Any], nil)
+                    }
+                    // The sheet has copied the file where the user asked; the
+                    // temp copy is no longer needed.
+                    try? FileManager.default.removeItem(at: url)
+                }
+                self.present(sheet, animated: true, completion: nil)
+            }
         case "iapGetProducts":
             Task { @MainActor in
                 let products = await StoreKitManager.shared.loadProducts()
@@ -517,6 +593,40 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         guard let data = try? JSONEncoder().encode(s),
               let str = String(data: data, encoding: .utf8) else { return "\"\"" }
         return str
+    }
+
+    /// Sanitize a web-supplied file name before it is written to the file
+    /// system: no path separators or traversal, no control characters, a
+    /// sensible extension (from the mime type when the name has none) and a
+    /// bounded length. The web layer already sanitizes; this is defense in
+    /// depth for a name that arrives over the JS bridge.
+    static func safeFileName(_ name: String, mimeType: String) -> String {
+        var base = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Keep the last path component only, then strip anything that could
+        // change the destination directory.
+        if let slash = base.lastIndex(where: { $0 == "/" || $0 == "\\" }) {
+            base = String(base[base.index(after: slash)...])
+        }
+        base = base.replacingOccurrences(of: "..", with: "-")
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._- ()[]&'+")
+        base = String(base.filter { allowed.contains($0) })
+        if base.isEmpty || base == "." { base = "cofamio-document" }
+        if base.count > 120 { base = String(base.prefix(120)) }
+        if !base.contains(".") {
+            let ext: String
+            switch mimeType {
+            case "application/pdf": ext = "pdf"
+            case "image/jpeg": ext = "jpg"
+            case "image/png": ext = "png"
+            case "image/heic": ext = "heic"
+            default:
+                if mimeType.hasPrefix("image/") { ext = "img" }
+                else if mimeType.hasPrefix("text/") { ext = "txt" }
+                else { ext = "bin" }
+            }
+            base += "." + ext
+        }
+        return base
     }
 
     // MARK: - StoreKit 2 (Phase 2) — status push + backend sync
@@ -639,6 +749,17 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
     ///   - cofamioapp:// (bundled SPA) — allow (the scheme handler serves assets).
     ///   - http/https — keep in-app (Stripe Checkout / 3DS stay in the same cookie
     ///     context; universal links to our origin route into the bundle).
+    ///   - blob: — allow. The bundled SPA is served from the cofamioapp:// scheme
+    ///     handler, so any URL the page creates with URL.createObjectURL resolves
+    ///     to `blob:cofamioapp://…`. The document viewer renders PDFs in an
+    ///     <iframe src={blobUrl}> (documents.tsx): before this, the iframe
+    ///     navigation fell through to `default:` and was cancelled, so the viewer
+    ///     showed an EMPTY frame on device (owner report 2026-09-20). blob: URLs
+    ///     are same-origin, in-memory objects the page itself created — there is
+    ///     nothing to fetch and no external content can be injected through them.
+    ///     `data:` is deliberately NOT allowed: a data: URL is a full inline
+    ///     document and the download path no longer needs it (the Document
+    ///     Download button uses the native `download` bridge action instead).
     ///   - cofamio:// — handle as a deep link (mapped to a bundled route).
     ///   - mailto/tel — open in the system handler.
     func webView(
@@ -654,6 +775,10 @@ final class ViewController: UIViewController, WKScriptMessageHandlerWithReply, W
         case Self.appScheme:
             decisionHandler(.allow)
         case "http", "https":
+            decisionHandler(.allow)
+        case "blob":
+            // In-page objects (the document viewer's PDF/iframe blob) — safe, and
+            // the only reason the PDF viewer works inside the shell. See above.
             decisionHandler(.allow)
         case "cofamio":
             handleIncomingURL(url)
