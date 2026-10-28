@@ -3,7 +3,7 @@
   "appName": "CoFamio",
   "webDir": "dist",
   "server": {
-    "url": "https://cofamio.ctonew.app",
+    "url": "https://7923a795c396982e654b32182e912be1.ctonew.app",
     "cleartext": false
   },
   "ios": {
